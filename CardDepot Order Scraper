@@ -1,0 +1,285 @@
+{
+  "name": "Card Depot Order Scraper (Cloudflare Bypass)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "intervalId": "1",
+          "unit": "days",
+          "timezone": "America/New_York"
+        }
+      },
+      "name": "Daily Schedule",
+      "type": "n8n-nodes-base.schedule",
+      "typeVersion": 1,
+      "position": [
+        240,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "values": [
+          {
+            "name": "cardDepotLoginUrl",
+            "value": "https://carddepot.com/sign-in"
+          },
+          {
+            "name": "cardDepotOrdersUrl",
+            "value": "https://carddepot.com/my-orders"
+          },
+          {
+            "name": "flareSolverrUrl",
+            "value": "http://127.0.0.1:8191/v1"
+          },
+          {
+            "name": "username",
+            "value": "YOUR_CARD_DEPOT_EMAIL"
+          },
+          {
+            "name": "password",
+            "value": "YOUR_CARD_DEPOT_PASSWORD"
+          }
+        ],
+        "options": {}
+      },
+      "name": "Workflow Configuration (Set)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [
+        430,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "none",
+        "url": "={{$json.flareSolverrUrl}}",
+        "method": "POST",
+        "bodyParameters": {
+          "content_type": "json",
+          "content": "{\"cmd\": \"request.post\", \"url\": \"{{$json.cardDepotLoginUrl}}\", \"session\": \"carddepotsession\", \"maxTimeout\": 60000, \"postData\": \"email={{$json.username}}&password={{$json.password}}\"}"
+        },
+        "options": {
+          "includeResponseHeaders": true,
+          "responseFormat": "string"
+        }
+      },
+      "name": "Login via FlareSolverr",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        620,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "none",
+        "url": "={{$json.cardDepotOrdersUrl}}",
+        "options": {
+          "includeResponseHeaders": true,
+          "responseFormat": "string"
+        },
+        "sendHeaders": [
+          {
+            "name": "Cookie",
+            "value": "={{$json.data.solution.cookies.reduce((acc, cookie) => acc + cookie.name + '=' + cookie.value + '; ', '').slice(0, -2)}}"
+          }
+        ]
+      },
+      "name": "Fetch Orders Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        810,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "source": "html",
+        "selector": "a.order-link-selector",
+        "attribute": "href",
+        "cssSelector": {
+          "value": "a.order-link-selector",
+          "mode": "list",
+          "list": [
+            {
+              "selector": "a.order-link-selector",
+              "extract": "attribute",
+              "attribute": "href",
+              "name": "orderLink"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Extract Order Links (Cheerio)",
+      "type": "n8n-nodes-base.cheerio",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "none",
+        "url": "={{$json.orderLink}}",
+        "options": {
+          "includeResponseHeaders": true,
+          "responseFormat": "string"
+        },
+        "sendHeaders": [
+          {
+            "name": "Cookie",
+            "value": "={{$json.headers.cookie}}"
+          }
+        ]
+      },
+      "name": "Get Card Details (HTTP Request)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        1190,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "source": "html",
+        "cssSelector": {
+          "value": ".card-number-selector",
+          "mode": "list",
+          "list": [
+            {
+              "selector": ".card-number-selector",
+              "extract": "text",
+              "name": "Card Number"
+            },
+            {
+              "selector": ".card-expiry-selector",
+              "extract": "text",
+              "name": "Expiry Date"
+            },
+            {
+              "selector": ".order-id-selector",
+              "extract": "text",
+              "name": "Order ID"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Extract Card Details (Cheerio)",
+      "type": "n8n-nodes-base.cheerio",
+      "typeVersion": 1,
+      "position": [
+        1380,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "authentication": "={{$node[\"Google Sheets Credentials\"].id}}",
+        "spreadsheetId": "YOUR_SHEET_ID",
+        "sheetName": "Sheet1",
+        "columnName": "true",
+        "dataPropertyName": "data",
+        "options": {}
+      },
+      "name": "Write to Google Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "spreadsheet",
+        "operation": "get",
+        "spreadsheetId": "YOUR_SHEET_ID",
+        "sheetName": "Sheet1",
+        "options": {
+          "limit": 999999,
+          "returnFormat": "list"
+        }
+      },
+      "name": "Read Existing Order IDs",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 2,
+      "position": [
+        1570,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "dataMode": "splitInBatches",
+        "mode": "valueAndList",
+        "valueToCheckFor": "={{$json[\"Order ID\"]}}",
+        "listToCheckIn": "={{$node[\"Read Existing Order IDs\"].json[\"Order ID\"]}}",
+        "options": {}
+      },
+      "name": "Deduplicate",
+      "type": "n8n-nodes-base.deduplicate",
+      "typeVersion": 1,
+      "position": [
+        1570,
+        280
+      ]
+    }
+  ],
+  "connections": {
+    "Daily Schedule": [
+      [
+        "Workflow Configuration (Set)"
+      ]
+    ],
+    "Workflow Configuration (Set)": [
+      [
+        "Login via FlareSolverr"
+      ]
+    ],
+    "Login via FlareSolverr": [
+      [
+        "Fetch Orders Page"
+      ]
+    ],
+    "Fetch Orders Page": [
+      [
+        "Extract Order Links (Cheerio)"
+      ]
+    ],
+    "Extract Order Links (Cheerio)": [
+      [
+        "Get Card Details (HTTP Request)"
+      ]
+    ],
+    "Get Card Details (HTTP Request)": [
+      [
+        "Extract Card Details (Cheerio)"
+      ]
+    ],
+    "Extract Card Details (Cheerio)": [
+      [
+        "Read Existing Order IDs",
+        "Deduplicate"
+      ]
+    ],
+    "Read Existing Order IDs": [
+      [
+        "Deduplicate"
+      ]
+    ],
+    "Deduplicate": [
+      [
+        "Write to Google Sheet"
+      ]
+    ]
+  }
+}
